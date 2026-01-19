@@ -27,6 +27,10 @@ def schedule_to_text(region_name: str, day: Optional[DaySchedule], header: str =
             lines.append(f" • {s.start} — {s.end}")
     return "\n".join(lines)
 
-def schedule_hash(today: Optional[DaySchedule], tomorrow: Optional[DaySchedule], last_update: int) -> str:
-    base = f"{last_update}|{today}|{tomorrow}"
+def get_day_hash(day: Optional[DaySchedule]) -> str:
+    if not day:
+        return ""
+    # Мы хешируем только outages, так как title и group_key могут не меняться
+    # А вот если поменялись слоты — это важно.
+    base = str(day.outages)
     return hashlib.sha256(base.encode("utf-8")).hexdigest()

@@ -20,7 +20,6 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "180"))
-DAILY_SEND_HOUR = int(os.getenv("DAILY_SEND_HOUR", "20"))
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Kyiv")
 
 if not BOT_TOKEN:
@@ -69,6 +68,14 @@ def kb_actions():
     ])
 
 # --- handlers ---
+# --- imports fixed ---
+from formatting import schedule_to_text, get_day_hash
+
+# ... (imports remain) ...
+
+# --- UI helpers (remain same) ---
+
+# --- handlers ---
 @dp.message(CommandStart())
 async def start(m: Message):
     # Default to "svitlo" provider
@@ -110,74 +117,102 @@ async def pick_subgroup(cb: CallbackQuery):
     await cb.message.edit_text("✅ Збережено! Отримую актуальний графік…")
     await cb.answer()
 
-    await send_current_schedule(cb.from_user.id, force=True)
+    await process_subscription(cb.from_user.id, mode="first_run")
 
 @dp.callback_query(F.data == "act:refresh")
 async def act_refresh(cb: CallbackQuery):
     await cb.answer("Оновлюю...")
-    await send_current_schedule(cb.from_user.id, force=True)
+    await process_subscription(cb.from_user.id, mode="refresh")
 
 @dp.callback_query(F.data == "act:start")
 async def act_start(cb: CallbackQuery):
     await start(cb.message)
 
 
-# --- sending logic ---
-async def send_current_schedule(user_id: int, force: bool = False, send_tomorrow: bool = False, is_auto_update: bool = False):
+# --- Core Logic ---
+
+async def send_schedule_message(user_id: int, region_name: str, day, is_tomorrow: bool, header: str = None):
+    title = region_name + " (ЗАВТРА)" if is_tomorrow else region_name
+    text = schedule_to_text(title, day, header=header)
+    await bot.send_message(user_id, text, reply_markup=kb_actions())
+
+async def process_subscription(user_id: int, mode: str = "poll"):
+    """
+    mode: 
+      "poll"      - automatic check (compares hashes)
+      "refresh"   - user clicked refresh (force today)
+      "first_run" - user just subscribed (force today)
+    """
     sub = db.get_subscription(user_id)
     if not sub:
-        await bot.send_message(user_id, "Немає підписки. Натисни /start")
+        if mode != "poll":
+            await bot.send_message(user_id, "Немає підписки. Натисни /start")
         return
 
     prov = providers.get(sub.provider)
     if not prov:
-        await bot.send_message(user_id, "Провайдер недоступний. Натисни /start")
         return
 
+    # 1. Fetch data
+    try:
+        today, tomorrow, _ = await prov.get_schedule(sub.region_code, sub.group_num, sub.subgroup_num)
+    except Exception as e:
+        print(f"Error fetching schedule for {user_id}: {e}")
+        return
+
+    # 2. Calculate new hashes
+    h_today = get_day_hash(today)
+    h_tomorrow = get_day_hash(tomorrow)
+    new_combined_hash = f"{h_today}:{h_tomorrow}"
+
+    # 3. Get stored hashes
+    stored = sub.last_hash
+    if ":" in stored:
+        stored_today, stored_tomorrow = stored.split(":", 1)
+    else:
+        # Backward compatibility: old hash isn't split, so treat as empty/different
+        stored_today, stored_tomorrow = stored, ""
+
+    # 4. Resolve Region Name (for display)
     regions = await prov.list_regions()
     region_name = next((r.name for r in regions if r.code == sub.region_code), sub.region_code)
 
-    today, tomorrow, last_update = await prov.get_schedule(sub.region_code, sub.group_num, sub.subgroup_num)
-    h = schedule_hash(today, tomorrow, last_update)
+    # 5. Logic based on mode
+    if mode == "poll":
+        # Check Today
+        if h_today != stored_today:
+            await send_schedule_message(user_id, region_name, today, is_tomorrow=False, header="УВАГА! Графік змінився!")
+        
+        # Check Tomorrow
+        if tomorrow and (h_tomorrow != stored_tomorrow):
+            await send_schedule_message(user_id, region_name, tomorrow, is_tomorrow=True, header="З'явився/змінився графік на завтра!")
 
-    if (not force) and (h == sub.last_hash):
-        return
+        # Save state if ANY change
+        if (h_today != stored_today) or (h_tomorrow != stored_tomorrow):
+            db.set_last_hash(user_id, new_combined_hash)
 
-    header = None
-    if is_auto_update:
-        header = "УВАГА! Графік змінився!"
+    elif mode in ("refresh", "first_run"):
+        # Always send Today
+        await send_schedule_message(user_id, region_name, today, is_tomorrow=False)
+        # Update DB so we don't re-trigger on next poll
+        db.set_last_hash(user_id, new_combined_hash)
 
-    if send_tomorrow:
-        text = schedule_to_text(region_name + " (ЗАВТРА)", tomorrow, header=header)
-    else:
-        text = schedule_to_text(region_name, today, header=header)
-
-    await bot.send_message(user_id, text, reply_markup=kb_actions())
-    db.set_last_hash(user_id, h)
 
 async def poll_updates_job():
     subs = db.list_subscriptions()
     for s in subs:
         try:
-            await send_current_schedule(s.user_id, force=False, is_auto_update=True)
+            await process_subscription(s.user_id, mode="poll")
         except Exception as e:
-            # лучше логировать в файл, но не будем ломать рассылку всем
-            print("ERROR:", e)
+            print(f"Error in poll_updates_job for {s.user_id}: {e}")
 
-async def daily_tomorrow_job():
-    subs = db.list_subscriptions()
-    for s in subs:
-        try:
-            await send_current_schedule(s.user_id, force=True, send_tomorrow=True)
-        except Exception:
-            pass
+# We don't need daily_tomorrow_job anymore because poll_updates_job 
+# will detect when 'tomorrow' appears/changes and send it immediately.
 
 async def main():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
 
-    # просто передаём корутины — БЕЗ lambda и create_task
     scheduler.add_job(poll_updates_job, "interval", seconds=POLL_SECONDS)
-    scheduler.add_job(daily_tomorrow_job, "cron", hour=DAILY_SEND_HOUR, minute=0)
 
     scheduler.start()
     print("SCHEDULER STARTED")

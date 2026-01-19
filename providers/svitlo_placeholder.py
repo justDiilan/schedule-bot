@@ -155,6 +155,11 @@ class SvitloProvider(OutageProvider):
             if not day_slots:
                 return None
 
+            # Фильтруем "пустые" дни, где все значения 0 (нет данных)
+            # Если там есть хоть одна 1 (свет) или 2 (отключение) — тогда это график.
+            if all(v == 0 for v in day_slots.values()):
+                return None
+
             outages = self._slots_to_intervals(day_slots)
 
             return DaySchedule(

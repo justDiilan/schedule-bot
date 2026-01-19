@@ -2,7 +2,8 @@ import asyncio
 import json
 from unittest.mock import MagicMock, patch, AsyncMock
 from providers.svitlo_placeholder import SvitloProvider
-from formatting import schedule_hash
+from formatting import get_day_hash
+
 
 # Mock data based on user input
 MOCK_JSON_BODY = {
@@ -77,13 +78,17 @@ async def test_svitlo():
             print("Tomorrow: No data")
             
         # Test hash stability
-        h1 = schedule_hash(today, tomorrow, last_update)
-        today2, tomorrow2, last_update2 = await provider.get_schedule("ternopilska-oblast", "1", "1")
-        h2 = schedule_hash(today2, tomorrow2, last_update2)
+        h1_today = get_day_hash(today)
+        h1_tomorrow = get_day_hash(tomorrow)
         
-        print(f"Hash 1: {h1}")
-        print(f"Hash 2: {h2}")
-        assert h1 == h2, "Hashes must be identical for same data"
+        today2, tomorrow2, last_update2 = await provider.get_schedule("ternopilska-oblast", "1", "1")
+        h2_today = get_day_hash(today2)
+        h2_tomorrow = get_day_hash(tomorrow2)
+        
+        print(f"Hash 1 Today: {h1_today}")
+        print(f"Hash 2 Today: {h2_today}")
+        assert h1_today == h2_today, "Hashes must be identical for same data"
+        assert h1_tomorrow == h2_tomorrow, "Tomorrow hashes must be identical"
         print("Hash stability verified.")
 
 if __name__ == "__main__":
