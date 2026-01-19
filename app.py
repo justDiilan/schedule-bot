@@ -14,7 +14,8 @@ from dotenv import load_dotenv
 
 from db import DB
 from providers import build_providers
-from formatting import schedule_to_text, schedule_hash
+from formatting import schedule_to_text, get_day_hash
+
 
 load_dotenv()
 
