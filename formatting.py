@@ -3,12 +3,17 @@ import hashlib
 from typing import Optional
 from providers.base import DaySchedule
 
-def schedule_to_text(region_name: str, day: Optional[DaySchedule]) -> str:
+def schedule_to_text(region_name: str, day: Optional[DaySchedule], header: str = None) -> str:
     if not day:
         return f"🗺️ {region_name}\n\n⚠️ Немає даних по розкладу."
 
+    if header:
+        title_line = f"🔔 <b>{header}</b>\n🗺️ {region_name}"
+    else:
+        title_line = f"🗺️ <b>{region_name}</b>"
+
     lines = [
-        f"🗺️ <b>{region_name}</b>",
+        title_line,
         f"👥 <b>Група:</b> {day.group_key}",
         f"🗓️ <b>Дані:</b> {day.title}",
         "",

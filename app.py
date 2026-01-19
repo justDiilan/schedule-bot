@@ -123,7 +123,7 @@ async def act_start(cb: CallbackQuery):
 
 
 # --- sending logic ---
-async def send_current_schedule(user_id: int, force: bool = False, send_tomorrow: bool = False):
+async def send_current_schedule(user_id: int, force: bool = False, send_tomorrow: bool = False, is_auto_update: bool = False):
     sub = db.get_subscription(user_id)
     if not sub:
         await bot.send_message(user_id, "Немає підписки. Натисни /start")
@@ -143,10 +143,14 @@ async def send_current_schedule(user_id: int, force: bool = False, send_tomorrow
     if (not force) and (h == sub.last_hash):
         return
 
+    header = None
+    if is_auto_update:
+        header = "УВАГА! Графік змінився!"
+
     if send_tomorrow:
-        text = schedule_to_text(region_name + " (ЗАВТРА)", tomorrow)
+        text = schedule_to_text(region_name + " (ЗАВТРА)", tomorrow, header=header)
     else:
-        text = schedule_to_text(region_name, today)
+        text = schedule_to_text(region_name, today, header=header)
 
     await bot.send_message(user_id, text, reply_markup=kb_actions())
     db.set_last_hash(user_id, h)
@@ -155,7 +159,7 @@ async def poll_updates_job():
     subs = db.list_subscriptions()
     for s in subs:
         try:
-            await send_current_schedule(s.user_id, force=False)
+            await send_current_schedule(s.user_id, force=False, is_auto_update=True)
         except Exception as e:
             # лучше логировать в файл, но не будем ломать рассылку всем
             print("ERROR:", e)
