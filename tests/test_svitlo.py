@@ -62,14 +62,14 @@ async def test_svitlo():
         assert last_update == 0, "Last update should be 0 to stabilize hash"
         
         if today:
-            print(f"Today: {today.title}")
+            print(f"Today: {today.title} (Date: {today.date})")
             for slot in today.outages:
                 print(f"  Outage: {slot.start} - {slot.end}")
         else:
             print("Today: No data")
             
         if tomorrow:
-            print(f"Tomorrow: {tomorrow.title}")
+            print(f"Tomorrow: {tomorrow.title} (Date: {tomorrow.date})")
             for slot in tomorrow.outages:
                 print(f"  Outage: {slot.start} - {slot.end}")
             assert len(tomorrow.outages) > 0

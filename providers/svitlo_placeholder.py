@@ -164,6 +164,7 @@ class SvitloProvider(OutageProvider):
 
             return DaySchedule(
                 title=title,
+                date=date_str,
                 group_key=key,
                 outages=outages
             )

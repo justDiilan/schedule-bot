@@ -11,6 +11,7 @@ class Slot:
 @dataclass(frozen=True)
 class DaySchedule:
     title: str               # e.g. "Вівторок, 10.12.2024 на 00:00"
+    date: str                # e.g. "2024-12-10" (ISO format preferable)
     group_key: str           # e.g. "1.1"
     outages: List[Slot]      # list of outage intervals
 

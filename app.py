@@ -161,41 +161,91 @@ async def process_subscription(user_id: int, mode: str = "poll"):
         print(f"Error fetching schedule for {user_id}: {e}")
         return
 
-    # 2. Calculate new hashes
+    # 2. Helpers for state management
+    def parse_state(state_str):
+        # Format: "date|hash" or just "hash" (legacy)
+        if "|" in state_str:
+            return state_str.split("|", 1)
+        return "", state_str
+
+    def make_state(day_obj, day_hash):
+        if not day_obj:
+            return "" # Empty state
+        # day_obj.date comes from our updated DaySchedule
+        return f"{day_obj.date}|{day_hash}"
+
+    # 3. Calculate current state
     h_today = get_day_hash(today)
     h_tomorrow = get_day_hash(tomorrow)
-    new_combined_hash = f"{h_today}:{h_tomorrow}"
+    
+    current_today_state = make_state(today, h_today)
+    current_tomorrow_state = make_state(tomorrow, h_tomorrow)
+    new_combined_hash = f"{current_today_state}:{current_tomorrow_state}"
 
-    # 3. Get stored hashes
+    # 4. Get stored state
     stored = sub.last_hash
     if ":" in stored:
-        stored_today, stored_tomorrow = stored.split(":", 1)
+        stored_today_full, stored_tomorrow_full = stored.split(":", 1)
     else:
-        # Backward compatibility: old hash isn't split, so treat as empty/different
-        stored_today, stored_tomorrow = stored, ""
+        stored_today_full, stored_tomorrow_full = stored, ""
+        
+    s_today_date, s_today_hash = parse_state(stored_today_full)
+    s_tomorrow_date, s_tomorrow_hash = parse_state(stored_tomorrow_full)
 
-    # 4. Resolve Region Name (for display)
+    # 5. Resolve Region Name
     regions = await prov.list_regions()
     region_name = next((r.name for r in regions if r.code == sub.region_code), sub.region_code)
 
-    # 5. Logic based on mode
+    # 6. Logic based on mode
     if mode == "poll":
-        # Check Today
-        if h_today != stored_today:
-            await send_schedule_message(user_id, region_name, today, is_tomorrow=False, header="УВАГА! Графік змінився!")
-        
-        # Check Tomorrow
-        if tomorrow and (h_tomorrow != stored_tomorrow):
-            await send_schedule_message(user_id, region_name, tomorrow, is_tomorrow=True, header="З'явився/змінився графік на завтра!")
+        # --- Check Today ---
+        today_changed = False
+        if not today:
+            pass # No data for today, strange but skip
+        else:
+            # If dates differ, it's a rollover (or new subscription)
+            if today.date != s_today_date:
+                # Rollover logic:
+                # We interpret this as a change ONLY if it differs from what we knew as "tomorrow".
+                
+                # Check 1: We expected this (it matches yesterday's tomorrow) -> SILENT
+                if s_tomorrow_hash and (h_today == s_tomorrow_hash):
+                    pass # Verified match, silent rollover.
 
-        # Save state if ANY change
-        if (h_today != stored_today) or (h_tomorrow != stored_tomorrow):
-            db.set_last_hash(user_id, new_combined_hash)
+                # Check 2: We didn't expect this, or it changed -> ALERT
+                else:
+                     # Either s_tomorrow_hash was empty (late publication), 
+                     # OR it existed but h_today is different (update).
+                     header = "УВАГА! Графік змінився (оновлення)!" if s_tomorrow_hash else "З'явився графік на сьогодні!"
+                     await send_schedule_message(user_id, region_name, today, is_tomorrow=False, header=header)
+                     today_changed = True
+            
+            # If dates are same, check hash
+            elif h_today != s_today_hash:
+                await send_schedule_message(user_id, region_name, today, is_tomorrow=False, header="УВАГА! Графік змінився!")
+                today_changed = True
+        
+        # --- Check Tomorrow ---
+        tomorrow_changed = False
+        if tomorrow:
+            # If date different (new day appearing) -> ALERT
+            if tomorrow.date != s_tomorrow_date:
+                await send_schedule_message(user_id, region_name, tomorrow, is_tomorrow=True, header="З'явився/змінився графік на завтра!")
+                tomorrow_changed = True
+            # If date same but hash diff -> ALERT
+            elif h_tomorrow != s_tomorrow_hash:
+                 await send_schedule_message(user_id, region_name, tomorrow, is_tomorrow=True, header="УВАГА! Графік на завтра змінився!")
+                 tomorrow_changed = True
+
+        # Save state if anything "changed" in our state representation
+        # We always update DB if there's any diff in string representation to stay in sync
+        if new_combined_hash != stored:
+             db.set_last_hash(user_id, new_combined_hash)
 
     elif mode in ("refresh", "first_run"):
         # Always send Today
         await send_schedule_message(user_id, region_name, today, is_tomorrow=False)
-        # Update DB so we don't re-trigger on next poll
+        # Update DB 
         db.set_last_hash(user_id, new_combined_hash)
 
 
