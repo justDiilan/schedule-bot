@@ -24,18 +24,29 @@ class DB:
             last_hash TEXT NOT NULL DEFAULT ''
         )
         """)
+        # Safe migration: add username column if not exists
+        cur = self.conn.execute("PRAGMA table_info(subscriptions)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "username" not in columns:
+            self.conn.execute("ALTER TABLE subscriptions ADD COLUMN username TEXT")
+            
         self.conn.commit()
 
-    def upsert_subscription(self, user_id: int, provider: str, region_code: str, group_num: str, subgroup_num: str):
+    def upsert_subscription(self, user_id: int, provider: str, region_code: str, group_num: str, subgroup_num: str, username: str = None):
         self.conn.execute("""
-        INSERT INTO subscriptions(user_id, provider, region_code, group_num, subgroup_num, last_hash)
-        VALUES(?,?,?,?,?,COALESCE((SELECT last_hash FROM subscriptions WHERE user_id=?), ''))
+        INSERT INTO subscriptions(user_id, provider, region_code, group_num, subgroup_num, last_hash, username)
+        VALUES(?,?,?,?,?,COALESCE((SELECT last_hash FROM subscriptions WHERE user_id=?), ''), ?)
         ON CONFLICT(user_id) DO UPDATE SET
           provider=excluded.provider,
           region_code=excluded.region_code,
           group_num=excluded.group_num,
-          subgroup_num=excluded.subgroup_num
-        """, (user_id, provider, region_code, group_num, subgroup_num, user_id))
+          subgroup_num=excluded.subgroup_num,
+          username=excluded.username
+        """, (user_id, provider, region_code, group_num, subgroup_num, user_id, username))
+        self.conn.commit()
+
+    def delete_subscription(self, user_id: int):
+        self.conn.execute("DELETE FROM subscriptions WHERE user_id=?", (user_id,))
         self.conn.commit()
 
     def set_last_hash(self, user_id: int, last_hash: str):
@@ -56,3 +67,12 @@ class DB:
         FROM subscriptions
         """)
         return [Subscription(*r) for r in cur.fetchall()]
+
+    def get_stats(self) -> List[Tuple[int, Optional[str]]]:
+        """Returns list of (user_id, username)"""
+        cur = self.conn.execute("SELECT user_id, username FROM subscriptions")
+        return cur.fetchall()
+
+    def get_all_user_ids(self) -> List[int]:
+        cur = self.conn.execute("SELECT user_id FROM subscriptions")
+        return [r[0] for r in cur.fetchall()]

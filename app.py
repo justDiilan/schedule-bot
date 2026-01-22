@@ -4,10 +4,11 @@ import asyncio
 import os
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.exceptions import TelegramForbiddenError
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
@@ -22,6 +23,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "180"))
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Kyiv")
+ADMIN_ID = 857110651
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is empty. Put it into .env")
@@ -110,10 +112,69 @@ async def pick_group(cb: CallbackQuery):
     await cb.message.edit_text(f"Група <b>{group_num}</b>. Тепер обери підгрупу:", reply_markup=kb)
     await cb.answer()
 
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    stats = db.get_stats()
+    count = len(stats)
+    
+    # Show last 20 users
+    last_users = stats[-20:]
+    text_lines = [f"📊 **Statistics**", f"Total Users: {count}", ""]
+    text_lines.append("**Last 20 Users:**")
+    for uid, uname in last_users:
+        u_str = f"@{uname}" if uname else "No username"
+        text_lines.append(f"`{uid}` - {u_str}")
+        
+    await message.answer("\n".join(text_lines), parse_mode="Markdown")
+
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+        
+    parts = message.text.split(" ", 1)
+    if len(parts) < 2:
+        await message.answer("Usage: /broadcast <text>")
+        return
+        
+    text = parts[1]
+    user_ids = db.get_all_user_ids()
+    
+    sent = 0
+    blocked = 0
+    failed = 0
+    
+    status_msg = await message.answer(f"🚀 Starting broadcast to {len(user_ids)} users...")
+    
+    for uid in user_ids:
+        try:
+            await bot.send_message(uid, text)
+            sent += 1
+        except TelegramForbiddenError:
+            db.delete_subscription(uid)
+            blocked += 1
+        except Exception as e:
+            print(f"Failed to send to {uid}: {e}")
+            failed += 1
+        # Small delay to avoid hitting limits too hard
+        await asyncio.sleep(0.05)
+            
+    await status_msg.edit_text(
+        f"✅ **Broadcast Complete**\n"
+        f"Sent: {sent}\n"
+        f"Blocked (removed): {blocked}\n"
+        f"Failed: {failed}"
+    )
+
 @dp.callback_query(F.data.startswith("sub:"))
 async def pick_subgroup(cb: CallbackQuery):
     _, prov_id, region_code, group_num, subgroup_num = cb.data.split(":")
-    db.upsert_subscription(cb.from_user.id, prov_id, region_code, group_num, subgroup_num)
+    
+    username = cb.from_user.username or cb.from_user.first_name
+    db.upsert_subscription(cb.from_user.id, prov_id, region_code, group_num, subgroup_num, username=username)
 
     await cb.message.edit_text("✅ Збережено! Отримую актуальний графік…")
     await cb.answer()
@@ -254,6 +315,9 @@ async def poll_updates_job():
     for s in subs:
         try:
             await process_subscription(s.user_id, mode="poll")
+        except TelegramForbiddenError:
+            print(f"User {s.user_id} blocked the bot. Removing.")
+            db.delete_subscription(s.user_id)
         except Exception as e:
             print(f"Error in poll_updates_job for {s.user_id}: {e}")
 
