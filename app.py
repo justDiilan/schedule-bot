@@ -81,6 +81,21 @@ from formatting import schedule_to_text, get_day_hash
 # --- handlers ---
 @dp.message(CommandStart())
 async def start(m: Message):
+    # Try to capture/update username even if not subscribing yet.
+    # We can check if subscription exists and just update username, or wait.
+    # Easiest way: if subs exist, db.upsert... keeping values? 
+    # db.upsert requires region/group. 
+    # Let's just create a helper in DB to update username ONLY?
+    # Or for now: just proceed to regions logic.
+    # Actually, we can check db.get_subscription(m.from_user.id)
+    # If exists -> update username.
+    
+    existing = db.get_subscription(m.from_user.id)
+    if existing:
+         username = m.from_user.username or m.from_user.first_name
+         # Update keeping existing settings
+         db.upsert_subscription(existing.user_id, existing.provider, existing.region_code, existing.group_num, existing.subgroup_num, username=username)
+
     # Default to "svitlo" provider
     prov_id = "svitlo"
     kb, _ = await kb_regions(prov_id)
@@ -116,6 +131,12 @@ async def pick_group(cb: CallbackQuery):
 async def cmd_stats(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
+
+    # Update admin's username if missing/changed
+    existing = db.get_subscription(message.from_user.id)
+    if existing:
+         username = message.from_user.username or message.from_user.first_name
+         db.upsert_subscription(existing.user_id, existing.provider, existing.region_code, existing.group_num, existing.subgroup_num, username=username)
     
     stats = db.get_stats()
     count = len(stats)
