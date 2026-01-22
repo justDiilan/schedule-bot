@@ -143,13 +143,19 @@ async def cmd_stats(message: Message):
     
     # Show last 20 users
     last_users = stats[-20:]
-    text_lines = [f"📊 **Statistics**", f"Total Users: {count}", ""]
-    text_lines.append("**Last 20 Users:**")
+    text_lines = [f"📊 <b>Statistics</b>", f"Total Users: {count}", ""]
+    text_lines.append("<b>Last 20 Users:</b>")
     for uid, uname in last_users:
-        u_str = f"@{uname}" if uname else "No username"
-        text_lines.append(f"`{uid}` - {u_str}")
+        if uname:
+             # Basic escape for HTML just in case
+             safe_uname = uname.replace("<", "&lt;").replace(">", "&gt;").replace("&", "&amp;")
+             u_str = f"@{safe_uname}"
+        else:
+             u_str = "No username"
         
-    await message.answer("\n".join(text_lines), parse_mode="Markdown")
+        text_lines.append(f"<code>{uid}</code> - {u_str}")
+        
+    await message.answer("\n".join(text_lines), parse_mode="HTML")
 
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
