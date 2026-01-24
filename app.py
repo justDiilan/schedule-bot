@@ -67,7 +67,8 @@ def kb_subgroups(provider_id: str, region_code: str, group_num: str, subgroups: 
 def kb_actions():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Оновити", callback_data="act:refresh")],
-        [InlineKeyboardButton(text="⚙️ Змінити регіон", callback_data="act:start")]
+        [InlineKeyboardButton(text="⚙️ Змінити регіон", callback_data="act:start")],
+        [InlineKeyboardButton(text="✍️ Написати розробнику", callback_data="act:feedback_info")]
     ])
 
 # --- handlers ---
@@ -157,6 +158,35 @@ async def cmd_stats(message: Message):
         
     await message.answer("\n".join(text_lines), parse_mode="HTML")
 
+@dp.message(Command("feedback"))
+async def cmd_feedback(message: Message):
+    parts = message.text.split(" ", 1)
+    if len(parts) < 2:
+        await message.answer("📝 Щоб надіслати повідомлення розробнику, напиши:\n<code>/feedback Текст повідомлення</code>", parse_mode="HTML")
+        return
+        
+    feedback_text = parts[1]
+    user = message.from_user
+    
+    # Format info about sender
+    # Use HTML escape for safety
+    safe_name = (user.full_name or "Unknown").replace("<", "&lt;").replace(">", "&gt;")
+    safe_uname = f"@{user.username}" if user.username else "No username"
+    
+    admin_text = (
+        f"📨 <b>NEW FEEDBACK</b>\n"
+        f"From: {safe_name} ({safe_uname})\n"
+        f"ID: <code>{user.id}</code>\n\n"
+        f"{feedback_text.replace('<', '&lt;').replace('>', '&gt;')}"
+    )
+    
+    try:
+        await bot.send_message(ADMIN_ID, admin_text, parse_mode="HTML")
+        await message.answer("✅ Ваше повідомлення надіслано розробнику! Дякую.")
+    except Exception as e:
+        print(f"Failed to send feedback from {user.id}: {e}")
+        await message.answer("❌ Помилка при надсиланні. Спробуйте пізніше.")
+
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -216,6 +246,11 @@ async def act_refresh(cb: CallbackQuery):
 @dp.callback_query(F.data == "act:start")
 async def act_start(cb: CallbackQuery):
     await start(cb.message)
+
+@dp.callback_query(F.data == "act:feedback_info")
+async def act_feedback_info(cb: CallbackQuery):
+    await cb.answer()
+    await cb.message.answer("📝 Щоб надіслати повідомлення, просто введіть команду:\n\n<code>/feedback Ваш текст тут</code>", parse_mode="HTML")
 
 
 # --- Core Logic ---
