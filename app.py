@@ -9,6 +9,11 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramForbiddenError
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+
+class FeedbackState(StatesGroup):
+    waiting_for_message = State()
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
@@ -248,9 +253,35 @@ async def act_start(cb: CallbackQuery):
     await start(cb.message)
 
 @dp.callback_query(F.data == "act:feedback_info")
-async def act_feedback_info(cb: CallbackQuery):
+async def act_feedback_info(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await cb.message.answer("📝 Щоб надіслати повідомлення, просто введіть команду:\n\n<code>/feedback Ваш текст тут</code>", parse_mode="HTML")
+    await state.set_state(FeedbackState.waiting_for_message)
+    await cb.message.answer("✍️ <b>Напишіть ваше повідомлення прямо зараз:</b>\n\n(Можете описати проблему або пропозицію, я передам розробнику)", parse_mode="HTML")
+
+@dp.message(FeedbackState.waiting_for_message)
+async def feedback_message_handler(message: Message, state: FSMContext):
+    # Capture message logic similar to cmd_feedback but without command parsing
+    user = message.from_user
+    feedback_text = message.text or "[Not text message]"
+
+    safe_name = (user.full_name or "Unknown").replace("<", "&lt;").replace(">", "&gt;")
+    safe_uname = f"@{user.username}" if user.username else "No username"
+
+    admin_text = (
+        f"📨 <b>NEW FEEDBACK (via Button)</b>\n"
+        f"From: {safe_name} ({safe_uname})\n"
+        f"ID: <code>{user.id}</code>\n\n"
+        f"{feedback_text.replace('<', '&lt;').replace('>', '&gt;')}"
+    )
+
+    try:
+        await bot.send_message(ADMIN_ID, admin_text, parse_mode="HTML")
+        await message.answer("✅ <b>Відправлено!</b> Дякую за зворотній зв'язок.", parse_mode="HTML")
+    except Exception as e:
+        print(f"Failed to send feedback from {user.id}: {e}")
+        await message.answer("❌ Помилка при надсиланні. Спробуйте пізніше.")
+    
+    await state.clear()
 
 
 # --- Core Logic ---
