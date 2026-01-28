@@ -40,6 +40,26 @@ db = DB(db_path)
 providers = build_providers()
 
 # --- UI helpers ---
+# --- UI helpers ---
+async def kb_all_regions():
+    kb = InlineKeyboardBuilder()
+    
+    for prov_id, prov in providers.items():
+        try:
+            regions = await prov.list_regions()
+            for r in regions:
+                # Filter duplicates: If Svitlo provider returns Ternopil, ignore it
+                # because we have a dedicated "ternopil" provider now.
+                if prov_id == "svitlo" and ("тернопіль" in r.name.lower() or "ternopil" in r.code.lower()):
+                    continue
+
+                kb.button(text=r.name, callback_data=f"reg:{prov_id}:{r.code}")
+        except Exception as e:
+            print(f"Error fetching regions from {prov_id}: {e}")
+            
+    kb.adjust(2)
+    return kb.as_markup()
+
 async def kb_regions(provider_id: str):
     prov = providers[provider_id]
     regions = await prov.list_regions()
@@ -88,24 +108,14 @@ from formatting import schedule_to_text, get_day_hash
 @dp.message(CommandStart())
 async def start(m: Message):
     # Try to capture/update username even if not subscribing yet.
-    # We can check if subscription exists and just update username, or wait.
-    # Easiest way: if subs exist, db.upsert... keeping values? 
-    # db.upsert requires region/group. 
-    # Let's just create a helper in DB to update username ONLY?
-    # Or for now: just proceed to regions logic.
-    # Actually, we can check db.get_subscription(m.from_user.id)
-    # If exists -> update username.
-    
     existing = db.get_subscription(m.from_user.id)
     if existing:
          username = m.from_user.username or m.from_user.first_name
-         # Update keeping existing settings
          db.upsert_subscription(existing.user_id, existing.provider, existing.region_code, existing.group_num, existing.subgroup_num, username=username)
 
-    # Default to "svitlo" provider
-    prov_id = "svitlo"
-    kb, _ = await kb_regions(prov_id)
-    await m.answer("Привіт! Обери регіон (Svitlo Live):", reply_markup=kb)
+    # Show all regions from ALL providers
+    kb = await kb_all_regions()
+    await m.answer("Привіт! Обери свій регіон:", reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("reg:"))
 async def pick_region(cb: CallbackQuery):
@@ -399,6 +409,10 @@ async def process_subscription(user_id: int, mode: str = "poll"):
     elif mode in ("refresh", "first_run"):
         # Always send Today
         await send_schedule_message(user_id, region_name, today, is_tomorrow=False)
+        
+        # If tomorrow exists, send it too! (Otherwise we update DB hash and "swallow" the notification)
+        if tomorrow:
+             await send_schedule_message(user_id, region_name, tomorrow, is_tomorrow=True)
         # Update DB 
         db.set_last_hash(user_id, new_combined_hash)
 
