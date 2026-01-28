@@ -32,10 +32,13 @@ class TernopilProvider(OutageProvider):
             return slots
 
         def get_state(val_str):
-            v = int(val_str)
-            if v == 1: return "outage"
-            if v == 10: return "maybe" # Or treat as outage? users say "possible outage"
-            return "on"
+            try:
+                v = int(val_str)
+                if v == 1: return "outage"
+                if v == 10: return "switching"
+                return "on"
+            except ValueError:
+                return "on"
 
         prev_state = get_state(times[sorted_keys[0]])
         start_time = sorted_keys[0]
@@ -45,20 +48,15 @@ class TernopilProvider(OutageProvider):
             current_state = get_state(val)
 
             if current_state != prev_state:
-                # Close previous interval if it was outage or maybe
-                if prev_state in ("outage", "maybe"):
+                # Close previous interval if it was outage or switching
+                if prev_state in ("outage", "switching"):
                     slots.append(Slot(start=start_time, end=t, kind=prev_state))
                 
                 start_time = t
                 prev_state = current_state
         
         # Close last interval
-        # Assuming last point is valid until 24:00 or next day
-        # The data goes up to 23:30 usually.
-        # If the last point is 23:30, it covers 23:30-00:00 (next day) effectively?
-        # Standard logic usually implies interval covers [t, t+step).
-        # Let's assume step is 30 mins.
-        if prev_state in ("outage", "maybe"):
+        if prev_state in ("outage", "switching"):
              slots.append(Slot(start=start_time, end="24:00", kind=prev_state))
 
         return slots
