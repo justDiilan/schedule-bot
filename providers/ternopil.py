@@ -118,7 +118,13 @@ class TernopilProvider(OutageProvider):
         t_after = t_after.replace(microsecond=0)
         t_before = t_before.replace(microsecond=0)
         
-        time_val = int(now_ua.timestamp())
+        # Calculate 'time' parameter based on known reference.
+        # 2026-02-11 is 21299.
+        # This seems to be days since approx Oct 1967.
+        ref_date = datetime(2026, 2, 11, tzinfo=ua_tz).date()
+        days_diff = (now_ua.date() - ref_date).days
+        time_val = 21299 + days_diff
+        
         debug_key = base64.b64encode(str(time_val).encode()).decode()
         
         params = {
@@ -143,8 +149,8 @@ class TernopilProvider(OutageProvider):
             print(f"Ternopil API fetch error: {e}")
             return None, None, 0
 
-        today_str = now.strftime("%Y-%m-%d")
-        tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+        today_str = now_ua.strftime("%Y-%m-%d")
+        tomorrow_str = (now_ua + timedelta(days=1)).strftime("%Y-%m-%d")
 
         today_sched = None
         tomorrow_sched = None
