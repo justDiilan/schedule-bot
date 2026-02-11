@@ -9,11 +9,11 @@ from .base import OutageProvider, RegionMeta, DaySchedule, Slot
 
 class TernopilProvider(OutageProvider):
     id = "ternopil"
-    API_URL = "https://api-toe-poweron.inneti.net/api/actual_gpv_graphs"
+    API_URL = "https://api-poweron.toe.com.ua/api/a_gpv_g"
 
-    async def _fetch(self) -> dict:
+    async def _fetch(self, params: dict) -> dict:
         async with aiohttp.ClientSession() as s:
-            async with s.get(self.API_URL) as r:
+            async with s.get(self.API_URL, params=params) as r:
                 r.raise_for_status()
                 return await r.json()
 
@@ -76,32 +76,35 @@ class TernopilProvider(OutageProvider):
         subgroup: str
     ) -> Tuple[Optional[DaySchedule], Optional[DaySchedule], int]:
         
+        import pytz
+        from urllib.parse import quote
+        
+        tz = pytz.timezone("Europe/Kyiv")
+        now = datetime.now(tz)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow_end = (today_start + timedelta(days=2)) # Covers today and tomorrow effectively
+        
+        # Format dates as ISO 8601 with offset, urlencoded? 
+        # aiohttp handles params encoding.
+        # API expects: before=2026-02-12T00:00:00+00:00 ...
+        # Let's ensure we send correct ISO format.
+        # User example: 2026-02-12T00:00:00+00:00. This looks like UTC or just offset.
+        # Let's try sending standard ISO.
+        
+        params = {
+            "after": today_start.isoformat(),
+            "before": tomorrow_end.isoformat(),
+            "group[]": f"{group}.{subgroup}",
+            "time": int(now.timestamp()) # Cache buster
+        }
+
         try:
-            data = await self._fetch()
+            data = await self._fetch(params)
             members = data.get("hydra:member", [])
         except Exception as e:
             print(f"Ternopil API fetch error: {e}")
             return None, None, 0
 
-        # Determine target dates
-        # Use simple date checking. 
-        # Ideally we know "Today" from system time.
-        # Let's use datetime.now() assuming server time is roughly correct for matching "2026-01-28" strings.
-        # Since we just want to return "Today" and "Tomorrow" objects if they exist in the feed.
-        
-        # BUT the bot logic in app.py relies on "Today" being the actual today.
-        # So we must identify which graph is today.
-        
-        # Note: user environment might be UTC, but dates in API are likely "local date" (00:00+00:00 offset in string but meaning local day).
-        # Let's rely on string matching YYYY-MM-DD.
-        
-        # Actually, best practice: get today's date from system (with TZ if possible, or naive) and match.
-        from datetime import timezone
-        # Users TZ is +02:00 usually (Kyiv).
-        # Let's just create today string.
-        import pytz
-        tz = pytz.timezone("Europe/Kyiv")
-        now = datetime.now(tz)
         today_str = now.strftime("%Y-%m-%d")
         tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -120,10 +123,18 @@ class TernopilProvider(OutageProvider):
             date_part = raw_date.split("T")[0]
             
             data_json = graph.get("dataJson", {})
+            
+            # dataJson might contain the key directly
             if target_key not in data_json:
                 continue
+            
+            # dataJson[target_key] might be the dict with "times" or just the dict?
+            # User example: "dataJson":{"3.1":{"times":{...}}}
+            group_data = data_json[target_key]
+            if "times" not in group_data:
+                continue
                 
-            times = data_json[target_key]["times"]
+            times = group_data["times"]
             slots = self._slots_from_times(times)
             
             # Simple title
