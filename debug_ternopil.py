@@ -7,19 +7,44 @@ import aiohttp
 os.environ["TIMEZONE"] = "Europe/Kyiv"
 
 async def main():
-    print("--- Starting Debug (Manual URL) ---")
+    print("--- Starting Debug (Manual URL + Auth) ---")
+    import base64
+    from datetime import datetime, timedelta
+    import pytz
+    
+    # Generate time/key
+    tz = pytz.timezone("Europe/Kyiv")
+    now = datetime.now(tz)
+    time_val = int(now.timestamp())
+    debug_key = base64.b64encode(str(time_val).encode()).decode()
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "x-debug-key": debug_key
     }
     
-    # Exact URL from user (assuming group[] is literal or encoded?)
     base = "https://api-poweron.toe.com.ua/api/a_gpv_g"
-    # Try without group and time
-    qs = "before=2026-02-12T00:00:00%2B00:00&after=2026-02-10T12:00:00%2B00:00"
+    
+    # Use UTC dates covering user range example
+    # User curl: after=...10T12:00... before=...12T00:00...
+    # Let's generate nice ISO UTC strings
+    from datetime import timezone
+    
+    t_start = now.astimezone(timezone.utc) - timedelta(days=1)
+    t_end = now.astimezone(timezone.utc) + timedelta(days=2)
+    
+    # Python isoformat() might be +00:00.
+    # Url encode + as %2B.
+    # We can just use the user's exact string format if we want to be safe, but let's try dynamic.
+    
+    after_str = t_start.strftime("%Y-%m-%dT%H:%M:%S+00:00").replace("+", "%2B")
+    before_str = t_end.strftime("%Y-%m-%dT%H:%M:%S+00:00").replace("+", "%2B")
+    
+    qs = f"before={before_str}&after={after_str}&group[]=3.1&time={time_val}"
     url = f"{base}?{qs}"
     
     print(f"Fetching: {url}")
+    print(f"Header x-debug-key: {debug_key}")
     
     try:
         async with aiohttp.ClientSession(headers=headers) as s:

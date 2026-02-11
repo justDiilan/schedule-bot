@@ -11,12 +11,19 @@ class TernopilProvider(OutageProvider):
     id = "ternopil"
     API_URL = "https://api-poweron.toe.com.ua/api/a_gpv_g"
 
-    async def _fetch(self, params: dict) -> dict:
+    async def _fetch(self, params: dict, headers: dict = None) -> dict:
         print(f"DEBUG: Fetching {self.API_URL} with params: {params}")
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        
+        base_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://poweron.toe.com.ua",
+            "Referer": "https://poweron.toe.com.ua/",
         }
-        async with aiohttp.ClientSession(headers=headers) as s:
+        if headers:
+            base_headers.update(headers)
+
+        async with aiohttp.ClientSession(headers=base_headers) as s:
             async with s.get(self.API_URL, params=params) as r:
                 print(f"DEBUG: Response status: {r.status}")
                 text = await r.text()
@@ -85,31 +92,51 @@ class TernopilProvider(OutageProvider):
     ) -> Tuple[Optional[DaySchedule], Optional[DaySchedule], int]:
         
         import pytz
-        from urllib.parse import quote
+        import base64
+        from datetime import timezone
         
-        tz = pytz.timezone("Europe/Kyiv")
-        now = datetime.now(tz)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        tomorrow_end = (today_start + timedelta(days=2)) # Covers today and tomorrow effectively
+        # Dates setup:
+        # API seems to use UTC (+00:00).
+        # We need "Today" and "Tomorrow" relative to UA time.
         
-        # Format dates as ISO 8601 with offset, urlencoded? 
-        # aiohttp handles params encoding.
-        # API expects: before=2026-02-12T00:00:00+00:00 ...
-        # Let's ensure we send correct ISO format.
-        # User example: 2026-02-12T00:00:00+00:00. This looks like UTC or just offset.
-        # Let's try sending standard ISO.
+        ua_tz = pytz.timezone("Europe/Kyiv")
+        now_ua = datetime.now(ua_tz)
+        
+        # We want to cover Today and Tomorrow.
+        # Let's request: Start of Yesterday UTC -> End of Tomorrow UTC.
+        # Wider range is safer.
+        
+        # Get current time in UTC
+        now_utc = datetime.now(timezone.utc)
+        
+        # Range: Now - 24h to Now + 48h
+        t_after = now_utc - timedelta(days=1)
+        t_before = now_utc + timedelta(days=2)
+        
+        # Format: YYYY-MM-DDTHH:MM:SS+00:00
+        # Ensure we don't have microseconds
+        t_after = t_after.replace(microsecond=0)
+        t_before = t_before.replace(microsecond=0)
+        
+        time_val = int(now_ua.timestamp())
+        debug_key = base64.b64encode(str(time_val).encode()).decode()
         
         params = {
-            "after": today_start.isoformat(),
-            "before": tomorrow_end.isoformat(),
+            "after": t_after.isoformat(),
+            "before": t_before.isoformat(),
             "group[]": f"{group}.{subgroup}",
-            "time": int(now.timestamp()) # Cache buster
+            "time": time_val
+        }
+        
+        req_headers = {
+            "x-debug-key": debug_key
         }
         
         print(f"DEBUG: get_schedule params constructed: {params}")
+        print(f"DEBUG: x-debug-key: {debug_key}")
 
         try:
-            data = await self._fetch(params)
+            data = await self._fetch(params, headers=req_headers)
             members = data.get("hydra:member", [])
             print(f"DEBUG: Found {len(members)} graph members")
         except Exception as e:
