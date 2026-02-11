@@ -12,10 +12,18 @@ class TernopilProvider(OutageProvider):
     API_URL = "https://api-poweron.toe.com.ua/api/a_gpv_g"
 
     async def _fetch(self, params: dict) -> dict:
-        async with aiohttp.ClientSession() as s:
+        print(f"DEBUG: Fetching {self.API_URL} with params: {params}")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        async with aiohttp.ClientSession(headers=headers) as s:
             async with s.get(self.API_URL, params=params) as r:
+                print(f"DEBUG: Response status: {r.status}")
+                text = await r.text()
+                print(f"DEBUG: Response body: {text[:1000]}...")
                 r.raise_for_status()
-                return await r.json()
+                return json.loads(text)
+    
 
     def _slots_from_times(self, times: dict) -> List[Slot]:
         """
@@ -97,10 +105,13 @@ class TernopilProvider(OutageProvider):
             "group[]": f"{group}.{subgroup}",
             "time": int(now.timestamp()) # Cache buster
         }
+        
+        print(f"DEBUG: get_schedule params constructed: {params}")
 
         try:
             data = await self._fetch(params)
             members = data.get("hydra:member", [])
+            print(f"DEBUG: Found {len(members)} graph members")
         except Exception as e:
             print(f"Ternopil API fetch error: {e}")
             return None, None, 0
