@@ -125,6 +125,16 @@ class TernopilProvider(OutageProvider):
         days_diff = (now_ua.date() - ref_date).days
         time_val = 21299 + days_diff
         
+        # Check for manual override in environment
+        # e.g. TERNOPIL_KEY_2=103244479
+        manual_key = os.getenv(f"TERNOPIL_KEY_{group}")
+        if manual_key:
+            try:
+                time_val = int(manual_key)
+                print(f"DEBUG: Using manual key for group {group}: {time_val}")
+            except ValueError:
+                print(f"Error parsing TERNOPIL_KEY_{group}: {manual_key}")
+        
         debug_key = base64.b64encode(str(time_val).encode()).decode()
         
         params = {
